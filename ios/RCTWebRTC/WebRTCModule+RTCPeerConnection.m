@@ -96,327 +96,12 @@ RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(peerConnectionInit
     return nil;
 }
 
-RCT_EXPORT_METHOD(peerConnectionSetConfiguration:(RTCConfiguration*)configuration objectID:(nonnull NSNumber *)objectID)
-{
-  RTCPeerConnection *peerConnection = self.peerConnections[objectID];
-  if (!peerConnection) {
-    return;
-  }
-  [peerConnection setConfiguration:configuration];
-}
-
-RCT_EXPORT_METHOD(peerConnectionCreateOffer:(nonnull NSNumber *)objectID
-                                    options:(NSDictionary *)options
-                                   callback:(RCTResponseSenderBlock)callback)
-{
-  RTCPeerConnection *peerConnection = self.peerConnections[objectID];
-  if (!peerConnection) {
-    return;
-  }
-
-  RTCMediaConstraints *constraints =
-    [[RTCMediaConstraints alloc] initWithMandatoryConstraints:options
-                                          optionalConstraints:nil];
-
-  [peerConnection
-    offerForConstraints:constraints
-      completionHandler:^(RTCSessionDescription *sdp, NSError *error) {
-        if (error) {
-          callback(@[
-            @(NO),
-            @{
-              @"type": @"CreateOfferFailed",
-              @"message": error.localizedDescription ?: [NSNull null]
-            }
-          ]);
-        } else {
-          NSString *type = [RTCSessionDescription stringForType:sdp.type];
-          callback(@[@(YES), @{
-                               @"sdpInfo": @{
-                                 @"sdp": sdp.sdp,
-                                 @"type": type
-                               },
-                               @"transceiversInfo": [SerializeUtils constructTransceiversInfoArrayWithPeerConnection:peerConnection]
-          }]);
-        }
-      }];
-}
-
-RCT_EXPORT_METHOD(peerConnectionCreateAnswer:(nonnull NSNumber *)objectID
-                                     options:(NSDictionary *)options
-                                    callback:(RCTResponseSenderBlock)callback)
-{
-  RTCPeerConnection *peerConnection = self.peerConnections[objectID];
-  if (!peerConnection) {
-    return;
-  }
-
-  RTCMediaConstraints *constraints =
-    [[RTCMediaConstraints alloc] initWithMandatoryConstraints:options
-                                          optionalConstraints:nil];
-
-  [peerConnection
-    answerForConstraints:constraints
-       completionHandler:^(RTCSessionDescription *sdp, NSError *error) {
-         if (error) {
-           callback(@[
-             @(NO),
-             @{
-               @"type": @"CreateAnswerFailed",
-               @"message": error.localizedDescription ?: [NSNull null]
-             }
-           ]);
-         } else {
-           NSString *type = [RTCSessionDescription stringForType:sdp.type];
-           callback(@[@(YES), @{
-                                @"sdpInfo": @{@"sdp": sdp.sdp,
-                                              @"type": type},
-                                @"transceiversInfo": [SerializeUtils constructTransceiversInfoArrayWithPeerConnection:peerConnection]
-           }]);
-         }
-       }];
-}
-
-RCT_EXPORT_METHOD(peerConnectionSetLocalDescription:(nonnull NSNumber *)objectID
-                                               desc:(RTCSessionDescription *)desc
-                                           resolver:(RCTPromiseResolveBlock)resolve
-                                           rejecter:(RCTPromiseRejectBlock)reject)
-{
-  RTCPeerConnection *peerConnection = self.peerConnections[objectID];
-  if (!peerConnection) {
-    reject(@"E_INVALID", @"PeerConnection not found", nil);
-    return;
-  }
-
-  __weak RTCPeerConnection *weakPc = peerConnection;
-
-  RTCSetSessionDescriptionCompletionHandler handler = ^(NSError *error) {
-    dispatch_async(self.workerQueue, ^{
-      if (error) {
-          reject(@"E_OPERATION_ERROR", error.localizedDescription, nil);
-      } else {
-        RTCPeerConnection *strongPc = weakPc;
-        NSMutableDictionary *sdpInfo = [NSMutableDictionary new];
-        RTCSessionDescription *localDesc = strongPc.localDescription;
-        if (localDesc) {
-            sdpInfo[@"type"] = [RTCSessionDescription stringForType:localDesc.type];
-            sdpInfo[@"sdp"] = localDesc.sdp;
-        }
-        id data = @{
-            @"sdpInfo": sdpInfo,
-            @"transceiversInfo": [SerializeUtils constructTransceiversInfoArrayWithPeerConnection:peerConnection]
-        };
-        resolve(data);
-      }
-    });
-  };
-
-  if (desc == nil) {
-    [peerConnection setLocalDescriptionWithCompletionHandler:handler];
-  } else {
-    [peerConnection setLocalDescription:desc completionHandler:handler];
-  }
-}
-
-RCT_EXPORT_METHOD(peerConnectionSetRemoteDescription:(nonnull NSNumber *)objectID
-                                               desc:(RTCSessionDescription *)desc
-                                           resolver:(RCTPromiseResolveBlock)resolve
-                                           rejecter:(RCTPromiseRejectBlock)reject)
-{
-  RTCPeerConnection *peerConnection = self.peerConnections[objectID];
-  if (!peerConnection) {
-    reject(@"E_INVALID", @"PeerConnection not found", nil);
-    return;
-  }
-
-  NSMutableArray *receiversIds = [NSMutableArray new];
-  for (RTCRtpTransceiver *transceiver in peerConnection.transceivers) {
-      [receiversIds addObject:transceiver.receiver.receiverId];
-  }
-
-  __weak RTCPeerConnection *weakPc = peerConnection;
-
-  RTCSetSessionDescriptionCompletionHandler handler = ^(NSError *error) {
-    dispatch_async(self.workerQueue, ^{
-      if (error) {
-          reject(@"E_OPERATION_ERROR", error.localizedDescription, nil);
-      } else {
-        NSMutableArray *newTransceivers = [NSMutableArray new];
-        for (RTCRtpTransceiver *transceiver in peerConnection.transceivers) {
-            if (![receiversIds containsObject:transceiver.receiver.receiverId]) {
-                NSMutableDictionary *newTransceiver = [NSMutableDictionary new];
-                newTransceiver[@"transceiverOrder"] = [NSNumber numberWithInt:_transceiverNextId++];
-                newTransceiver[@"transceiver"] = [SerializeUtils transceiverToJSONWithPeerConnectionId:objectID transceiver:transceiver];
-                [newTransceivers addObject:newTransceiver];
-            }
-        }
-
-        NSMutableDictionary *sdpInfo = [NSMutableDictionary new];
-        RTCSessionDescription *remoteDesc = peerConnection.remoteDescription;
-        if (remoteDesc) {
-            sdpInfo[@"type"] = [RTCSessionDescription stringForType:remoteDesc.type];
-            sdpInfo[@"sdp"] = remoteDesc.sdp;
-        }
-        id data = @{
-            @"sdpInfo": sdpInfo,
-            @"transceiversInfo": [SerializeUtils constructTransceiversInfoArrayWithPeerConnection:peerConnection],
-            @"newTransceivers": newTransceivers
-        };
-        resolve(data);
-      }
-    });
-  };
-
-  [peerConnection setRemoteDescription:desc completionHandler:handler];
-}
-
-RCT_EXPORT_METHOD(peerConnectionAddICECandidate:(nonnull NSNumber *)objectID
-                                      candidate:(RTCIceCandidate*)candidate
-                                       resolver:(RCTPromiseResolveBlock)resolve
-                                       rejecter:(RCTPromiseRejectBlock)reject)
-{
-  RTCPeerConnection *peerConnection = self.peerConnections[objectID];
-  if (!peerConnection) {
-    reject(@"E_INVALID", @"PeerConnection not found", nil);
-    return;
-  }
-
-  __weak RTCPeerConnection *weakPc = peerConnection;
-  [peerConnection addIceCandidate:candidate
-                completionHandler:^(NSError *error) {
-                  if (error) {
-                      reject(@"E_OPERATION_ERROR", @"addIceCandidate failed", error);
-                  } else {
-                      RTCPeerConnection *strongPc = weakPc;
-                      id newSdp = @{
-                          @"type": [RTCSessionDescription stringForType:strongPc.remoteDescription.type],
-                          @"sdp": strongPc.remoteDescription.sdp
-                      };
-                      resolve(newSdp);
-                  }
-                }];
-}
-RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(peerConnectionCanInsertDTMF:peerConnectionId:(nonnull NSNumber *)peerConnectionId senderId:(nonnull NSString *)senderId)
-{
-__block BOOL ret = NO;
-dispatch_sync(self.workerQueue, ^{
-    RTCPeerConnection *peerConnection = self.peerConnections[peerConnectionId];
+RCT_EXPORT_METHOD(peerConnectionSetConfiguration
+                  : (RTCConfiguration *)configuration objectID
+                  : (nonnull NSNumber *)objectID) {
+    RTCPeerConnection *peerConnection = self.peerConnections[objectID];
     if (!peerConnection) {
-        NSLog(@"peerConnectionCanInsertDTMF() peerConnection is nil");
         return;
-    }
-
-    RTCRtpSender *audioSender = nil;
-
-    for (RTCRtpSender *sender in peerConnection.senders){
-      if([sender.senderId isEqual: senderId]) {
-        audioSender = sender;
-        break;
-      }
-    }
-
-    if(audioSender){
-      ret = [audioSender.dtmfSender canInsertDtmf];
-    }
-
-    NSLog(@"peerConnectionCanInsertDTMF() audioSender is nil");
-    return;
-    });
-
-    return @(ret);
-}
-
-RCT_EXPORT_METHOD(peerConnectionSendDTMF:(nonnull NSString *)tone duration:(NSTimeInterval)duration interToneGap:(NSTimeInterval)interToneGap peerConnectionId:(nonnull NSNumber *)peerConnectionId senderId:(nonnull NSString *)senderId)
-{
-  RTCRtpSender* audioSender = nil ;
-  RTCPeerConnection *peerConnection = self.peerConnections[peerConnectionId];
-  if (!peerConnection) {
-    NSLog(@"peerConnectionSendDTMF() peerConnection is nil");
-    return;
-  }
-  for (RTCRtpSender *sender in peerConnection.senders){
-    if([sender.senderId isEqual: senderId]) {
-       audioSender = sender;
-       break;
-     }
-  }
-  if(audioSender){
-    if([audioSender.dtmfSender canInsertDtmf]){
-      BOOL istoneplayed = [audioSender.dtmfSender insertDtmf:tone duration:duration interToneGap:interToneGap];
-      NSLog(@"DTMF Tone played :: [%s]", istoneplayed ? "true" : "false");
-      return;
-    }
-      NSLog(@"peerConnectionSendDTMF() canInsertDtmf is false");
-      return;
-  }
-  NSLog(@"peerConnectionSendDTMF() audioSender is nil");
-  return;
-}
-
-RCT_EXPORT_METHOD(peerConnectionClose:(nonnull NSNumber *)objectID)
-{
-  RTCPeerConnection *peerConnection = self.peerConnections[objectID];
-  if (!peerConnection) {
-    return;
-  }
-
-  // Remove video track adapters
-  for (NSString *key in peerConnection.remoteTracks.allKeys) {
-      RTCMediaStreamTrack *track = peerConnection.remoteTracks[key];
-      if (track.kind == kRTCMediaStreamTrackKindVideo) {
-        [peerConnection removeVideoTrackAdapter: (RTCVideoTrack*) track];
-      }
-  }
-
-  [peerConnection close];
-
-  // Clean up peerConnection's streams and tracks
-  [peerConnection.remoteStreams removeAllObjects];
-  [peerConnection.remoteTracks removeAllObjects];
-
-  // Clean up peerConnection's dataChannels.
-  NSMutableDictionary<NSString *, DataChannelWrapper *> *dataChannels = peerConnection.dataChannels;
-  for (NSString *tag in dataChannels) {
-    dataChannels[tag].delegate = nil;
-    // There is no need to close the RTCDataChannel because it is owned by the
-    // RTCPeerConnection and the latter will close the former.
-  }
-  [dataChannels removeAllObjects];
-
-  [self.peerConnections removeObjectForKey:objectID];
-}
-
-RCT_EXPORT_METHOD(peerConnectionGetStats:(nonnull NSNumber *) objectID
-                                resolver:(RCTPromiseResolveBlock)resolve
-                                rejecter:(RCTPromiseRejectBlock)reject)
-{
-  RTCPeerConnection *peerConnection = self.peerConnections[objectID];
-  if (!peerConnection) {
-    reject(@"invalid_id", @"PeerConnection ID not found", nil);
-    return;
-  }
-
-  [peerConnection statisticsWithCompletionHandler:^(RTCStatisticsReport *report) {
-    resolve([self statsToJSON:report]);
-  }];
-}
-
-RCT_EXPORT_METHOD(receiverGetStats:(nonnull NSNumber *) pcId
-                        receiverId:(nonnull NSString *) receiverId
-                          resolver:(RCTPromiseResolveBlock)resolve
-                          rejecter:(RCTPromiseRejectBlock)reject)
-{
-  RTCPeerConnection *peerConnection = self.peerConnections[pcId];
-  if (!peerConnection) {
-    reject(@"invalid_id", @"PeerConnection ID not found", nil);
-    return;
-  }
-
-  RTCRtpReceiver *receiver;
-  for (RTCRtpReceiver *findRecv in peerConnection.receivers) {
-    if ([findRecv.receiverId isEqualToString:receiverId]) {
-      receiver = findRecv;
-      break;
     }
     [peerConnection setConfiguration:configuration];
 }
@@ -616,6 +301,63 @@ RCT_EXPORT_METHOD(peerConnectionAddICECandidate
     };
 
     [peerConnection addIceCandidate:candidate completionHandler:handler];
+}
+
+RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(peerConnectionCanInsertDTMF:peerConnectionId:(nonnull NSNumber *)peerConnectionId senderId:(nonnull NSString *)senderId)
+{
+__block BOOL ret = NO;
+dispatch_sync(self.workerQueue, ^{
+    RTCPeerConnection *peerConnection = self.peerConnections[peerConnectionId];
+    if (!peerConnection) {
+        NSLog(@"peerConnectionCanInsertDTMF() peerConnection is nil");
+        return;
+    }
+
+    RTCRtpSender *audioSender = nil;
+
+    for (RTCRtpSender *sender in peerConnection.senders){
+      if([sender.senderId isEqual: senderId]) {
+        audioSender = sender;
+        break;
+      }
+    }
+
+    if(audioSender){
+      ret = [audioSender.dtmfSender canInsertDtmf];
+    }
+
+    NSLog(@"peerConnectionCanInsertDTMF() audioSender is nil");
+    return;
+    });
+
+    return @(ret);
+}
+
+RCT_EXPORT_METHOD(peerConnectionSendDTMF:(nonnull NSString *)tone duration:(NSTimeInterval)duration interToneGap:(NSTimeInterval)interToneGap peerConnectionId:(nonnull NSNumber *)peerConnectionId senderId:(nonnull NSString *)senderId)
+{
+  RTCRtpSender* audioSender = nil ;
+  RTCPeerConnection *peerConnection = self.peerConnections[peerConnectionId];
+  if (!peerConnection) {
+    NSLog(@"peerConnectionSendDTMF() peerConnection is nil");
+    return;
+  }
+  for (RTCRtpSender *sender in peerConnection.senders){
+    if([sender.senderId isEqual: senderId]) {
+       audioSender = sender;
+       break;
+     }
+  }
+  if(audioSender){
+    if([audioSender.dtmfSender canInsertDtmf]){
+      BOOL istoneplayed = [audioSender.dtmfSender insertDtmf:tone duration:duration interToneGap:interToneGap];
+      NSLog(@"DTMF Tone played :: [%s]", istoneplayed ? "true" : "false");
+      return;
+    }
+      NSLog(@"peerConnectionSendDTMF() canInsertDtmf is false");
+      return;
+  }
+  NSLog(@"peerConnectionSendDTMF() audioSender is nil");
+  return;
 }
 
 RCT_EXPORT_METHOD(peerConnectionClose : (nonnull NSNumber *)objectID) {
