@@ -1,3 +1,13 @@
+import { NativeModules, Platform } from 'react-native';
+const { WebRTCModule } = NativeModules;
+
+if (WebRTCModule === null) {
+    throw new Error(`WebRTC native module not found.\n${Platform.OS === 'ios' ?
+        'Try executing the "pod install" command inside your projects ios folder.' :
+        'Try executing the "npm install" command inside your projects folder.'
+    }`);
+}
+
 import { setupNativeEvents } from './EventEmitter';
 import Logger from './Logger';
 import mediaDevices from './MediaDevices';
@@ -15,8 +25,7 @@ import RTCSessionDescription from './RTCSessionDescription';
 import RTCView from './RTCView';
 import ScreenCapturePickerView from './ScreenCapturePickerView';
 
-Logger.enable('*');
-// Logger.enable(`*,-${Logger.ROOT_PREFIX}:*:DEBUG`);
+Logger.enable(`${Logger.ROOT_PREFIX}:*`);
 
 // Add listeners for the native events early, since they are added asynchronously.
 setupNativeEvents();
