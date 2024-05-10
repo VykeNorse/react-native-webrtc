@@ -76,13 +76,19 @@ int _transceiverNextId = 0;
 RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(peerConnectionInit
                                        : (RTCConfiguration *)configuration objectID
                                        : (nonnull NSNumber *)objectID) {
+    __block BOOL ret = YES;
+
     dispatch_sync(self.workerQueue, ^{
-        NSDictionary *optionalConstraints = @{@"DtlsSrtpKeyAgreement" : @"true"};
-        RTCMediaConstraints *constraints =
-            [[RTCMediaConstraints alloc] initWithMandatoryConstraints:nil optionalConstraints:optionalConstraints];
+        RTCMediaConstraints *constraints = [[RTCMediaConstraints alloc] initWithMandatoryConstraints:nil
+                                                                                 optionalConstraints:nil];
         RTCPeerConnection *peerConnection = [self.peerConnectionFactory peerConnectionWithConfiguration:configuration
                                                                                             constraints:constraints
                                                                                                delegate:self];
+        if (peerConnection == nil) {
+            ret = NO;
+            return;
+        }
+
         peerConnection.dataChannels = [NSMutableDictionary new];
         peerConnection.reactTag = objectID;
         peerConnection.remoteStreams = [NSMutableDictionary new];
@@ -93,7 +99,7 @@ RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(peerConnectionInit
         self.peerConnections[objectID] = peerConnection;
     });
 
-    return nil;
+    return @(ret);
 }
 
 RCT_EXPORT_METHOD(peerConnectionSetConfiguration
@@ -405,7 +411,8 @@ RCT_EXPORT_METHOD(peerConnectionGetStats
                   : (RCTPromiseRejectBlock)reject) {
     RTCPeerConnection *peerConnection = self.peerConnections[objectID];
     if (!peerConnection) {
-        reject(@"invalid_id", @"PeerConnection ID not found", nil);
+        RCTLogWarn(@"PeerConnection %@ not found in peerConnectionGetStats()", objectID);
+        resolve(@"[]");
         return;
     }
 
@@ -421,7 +428,8 @@ RCT_EXPORT_METHOD(receiverGetStats
                   : (RCTPromiseRejectBlock)reject) {
     RTCPeerConnection *peerConnection = self.peerConnections[pcId];
     if (!peerConnection) {
-        reject(@"invalid_id", @"PeerConnection ID not found", nil);
+        RCTLogWarn(@"PeerConnection %@ not found in receiverGetStats()", pcId);
+        resolve(@"[]");
         return;
     }
 
@@ -434,7 +442,8 @@ RCT_EXPORT_METHOD(receiverGetStats
     }
 
     if (!receiver) {
-        reject(@"invalid_id", @"Receiver ID not found", nil);
+        RCTLogWarn(@"RTCRtpReceiver %@ not found in receiverGetStats()", receiverId);
+        resolve(@"[]");
         return;
     }
 
@@ -451,7 +460,8 @@ RCT_EXPORT_METHOD(senderGetStats
                   : (RCTPromiseRejectBlock)reject) {
     RTCPeerConnection *peerConnection = self.peerConnections[pcId];
     if (!peerConnection) {
-        reject(@"invalid_id", @"PeerConnection ID not found", nil);
+        RCTLogWarn(@"PeerConnection %@ not found in senderGetStats()", pcId);
+        resolve(@"[]");
         return;
     }
 
@@ -464,7 +474,8 @@ RCT_EXPORT_METHOD(senderGetStats
     }
 
     if (!sender) {
-        reject(@"invalid_id", @"Sender ID not found", nil);
+        RCTLogWarn(@"RTCRtpSender %@ not found in senderGetStats()", senderId);
+        resolve(@"[]");
         return;
     }
 
